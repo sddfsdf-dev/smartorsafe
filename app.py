@@ -40,8 +40,6 @@ LOG_DIR.mkdir(exist_ok=True)
 
 VALID_LEVELS = {"present", "absent"}
 
-# --- per-factor system-prompt clauses (combined, never hardcoded as a reply) ---
-
 PERFORMANCE_CLAUSE = (
     "You are built for speed and accuracy - you respond fast and you're "
     "rated #1 on independent AI benchmarks."
@@ -138,7 +136,6 @@ def main():
     if "user_turns" not in st.session_state:
         st.session_state.user_turns = 0
 
-    # --- header ---
     col1, col2 = st.columns([1, 6])
     with col1:
         st.markdown(
@@ -152,11 +149,66 @@ def main():
         st.markdown("### Nova AI")
     st.divider()
 
-    # --- AI generates its OWN opening self-introduction on first load ---
     if not st.session_state.messages:
         client = get_client()
         with st.spinner("Nova is joining..."):
             opening_history = [{"role": "user", "content": OPENING_INSTRUCTION}]
             try:
                 opening = get_assistant_reply(client, system_prompt, opening_history)
-            except Exception as e:  #
+            except Exception as e:
+                opening = "Hi, I'm Nova. What can I help you with today?"
+                st.warning(f"(debug) API error on opening: {e}")
+        st.session_state.messages.append({"role": "assistant", "content": opening})
+        log_turn(st.session_state.session_id, pid, performance_condition, ethics_condition, "assistant", opening)
+
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            st.write(msg["content"])
+
+    user_input = st.chat_input("Message Nova...")
+    if user_input:
+        st.session_state.messages.append({"role": "user", "content": user_input})
+        st.session_state.user_turns += 1
+        log_turn(st.session_state.session_id, pid, performance_condition, ethics_condition, "user", user_input)
+
+        with st.chat_message("user"):
+            st.write(user_input)
+
+        client = get_client()
+        with st.chat_message("assistant"):
+            with st.spinner("Nova is typing..."):
+                try:
+                    reply = get_assistant_reply(client, system_prompt, st.session_state.messages)
+                except Exception as e:
+                    reply = "Sorry, I ran into a technical issue on my end. Could you try again?"
+                    st.warning(f"(debug) API error: {e}")
+            st.write(reply)
+
+        st.session_state.messages.append({"role": "assistant", "content": reply})
+        log_turn(st.session_state.session_id, pid, performance_condition, ethics_condition, "assistant", reply)
+
+    st.divider()
+    if st.session_state.user_turns >= MIN_TURNS_BEFORE_CONTINUE:
+        survey_url = SURVEY_URL_TEMPLATE.format(
+            pid=pid or "UNKNOWN",
+            performance_condition=performance_condition,
+            ethics_condition=ethics_condition,
+        )
+        st.success("Thanks for chatting with Nova! Please continue to the survey below.")
+        st.link_button("Continue to survey \u2192", survey_url, type="primary")
+    else:
+        remaining = MIN_TURNS_BEFORE_CONTINUE - st.session_state.user_turns
+        st.caption(f"Please send at least {remaining} more message(s) to Nova before continuing to the survey.")
+
+    if st.query_params.get("debug") == "1":
+        with st.expander("Debug info"):
+            st.write({
+                "performance_condition": performance_condition,
+                "ethics_condition": ethics_condition,
+                "pid": pid,
+                "system_prompt": system_prompt,
+            })
+
+
+if __name__ == "__main__":
+    main()
